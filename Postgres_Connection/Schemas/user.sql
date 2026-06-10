@@ -1,0 +1,7 @@
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    spotify_id VARCHAR(255) UNIQUE NOT NULL,
+    display_name VARCHAR(255),
+    email VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
