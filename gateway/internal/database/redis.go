@@ -96,3 +96,44 @@ func GetLocation(spotifyID string) (*models.LocationUpdate, error) {
 func DeleteLocation(spotifyID string) error {
 	return rdb.Del(ctx, locationKey(spotifyID)).Err()
 }
+
+// ── Currently Playing Song ───────────────────────────
+
+// songKey builds the Redis key for a user's currently playing track.
+func songKey(spotifyID string) string {
+	return fmt.Sprintf("song:%s", spotifyID)
+}
+
+// SetCurrentSong stores the user's currently playing track in Redis.
+func SetCurrentSong(spotifyID string, track *models.Track, ttl time.Duration) error {
+	payload, err := json.Marshal(track)
+	if err != nil {
+		return fmt.Errorf("marshaling track: %w", err)
+	}
+
+	return rdb.Set(ctx, songKey(spotifyID), payload, ttl).Err()
+}
+
+// ClearCurrentSong clears the user's currently playing song key.
+func ClearCurrentSong(spotifyID string) error {
+	return rdb.Del(ctx, songKey(spotifyID)).Err()
+}
+
+// GetCurrentSong retrieves the cached currently playing track from Redis.
+// Returns nil if the key doesn't exist (expired or never set).
+func GetCurrentSong(spotifyID string) (*models.Track, error) {
+	raw, err := rdb.Get(ctx, songKey(spotifyID)).Result()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetching song from Redis: %w", err)
+	}
+
+	var track models.Track
+	if err := json.Unmarshal([]byte(raw), &track); err != nil {
+		return nil, fmt.Errorf("unmarshaling track: %w", err)
+	}
+
+	return &track, nil
+}

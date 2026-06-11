@@ -33,8 +33,9 @@ func main() {
 	http.HandleFunc("/login", handlers.HandleLogin)
 	http.HandleFunc("/callback", handlers.HandleCallback)
 	http.HandleFunc("/me", handlers.HandleMe)
-	http.HandleFunc("/ws", handlers.HandleLocationWS)        // WebSocket: real-time location
-	http.HandleFunc("/location", handlers.HandleLocationGet)  // REST: get last-known location
+	http.HandleFunc("/ws", handlers.HandleLocationWS)              // WebSocket: real-time location
+	http.HandleFunc("/location", handlers.HandleLocationGet)      // REST: get last-known location
+	http.HandleFunc("/currently-playing", handlers.HandleCurrentlyPlaying) // Poll Spotify → Redis
 
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {
