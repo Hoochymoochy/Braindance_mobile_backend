@@ -67,6 +67,16 @@ type AlbumImage struct {
 	Width  int    `json:"width"`
 }
 
+// ── Location ────────────────────────────────────────
+
+type LocationUpdate struct {
+	SpotifyID string  `json:"spotify_id"`
+	X         float64 `json:"x"`
+	Y         float64 `json:"y"`
+	Z         float64 `json:"z"`
+	Timestamp string  `json:"timestamp"`
+}
+
 // ── API Responses ────────────────────────────────────
 
 type AuthResponse struct {
@@ -74,4 +84,24 @@ type AuthResponse struct {
 	AccessToken  string       `json:"access_token"`
 	RefreshToken string       `json:"refresh_token"`
 	ExpiresIn    int          `json:"expires_in"`
+}
+
+// ── WebSocket Messages ───────────────────────────────
+
+// WsIncoming is what the phone sends: position data.
+type WsIncoming struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+// WsOutgoing is what the server sends back: the stored location.
+type WsOutgoing struct {
+	Type      string  `json:"type"` // "location_update" | "error" | "connected"
+	SpotifyID string  `json:"spotify_id,omitempty"`
+	X         float64 `json:"x,omitempty"`
+	Y         float64 `json:"y,omitempty"`
+	Z         float64 `json:"z,omitempty"`
+	Timestamp string  `json:"timestamp,omitempty"`
+	Message   string  `json:"message,omitempty"`
 }

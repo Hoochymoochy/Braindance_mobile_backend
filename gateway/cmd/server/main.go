@@ -23,11 +23,18 @@ func main() {
 	}
 	defer database.Close()
 
+	// Connect to Redis
+	if err := database.ConnectRedis(); err != nil {
+		log.Fatalf("Redis connection failed: %v", err)
+	}
+	defer database.CloseRedis()
+
 	// Register routes
 	http.HandleFunc("/login", handlers.HandleLogin)
 	http.HandleFunc("/callback", handlers.HandleCallback)
 	http.HandleFunc("/me", handlers.HandleMe)
-	http.HandleFunc("/location", handlers.HandleLogout)
+	http.HandleFunc("/ws", handlers.HandleLocationWS)        // WebSocket: real-time location
+	http.HandleFunc("/location", handlers.HandleLocationGet)  // REST: get last-known location
 
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {
