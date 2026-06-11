@@ -1,4 +1,4 @@
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     spotify_id VARCHAR(255) UNIQUE NOT NULL,
     display_name VARCHAR(255),

@@ -1,2 +1,21 @@
+# ── Rust ───────────────────────
 /target
+realtime/target
+
+# ── Go ─────────────────────────
+gateway/go.sum
+
+# ── Secrets ────────────────────
 .env
+gateway/.env
+realtime/.env
+
+# ── IDE ────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── OS ─────────────────────────
+.DS_Store
+Thumbs.db
