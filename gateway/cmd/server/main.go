@@ -24,10 +24,10 @@ func main() {
 	defer database.Close()
 
 	// Register routes
-	http.HandleFunc("/", handlers.HandleHome)
 	http.HandleFunc("/login", handlers.HandleLogin)
 	http.HandleFunc("/callback", handlers.HandleCallback)
 	http.HandleFunc("/me", handlers.HandleMe)
+	http.HandleFunc("/location", handlers.HandleLogout)
 
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {

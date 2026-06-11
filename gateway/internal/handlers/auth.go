@@ -9,18 +9,6 @@ import (
 	"braindance-gateway/internal/database"
 )
 
-// HandleHome renders the landing page with a Spotify login button.
-func HandleHome(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	w.Write([]byte(`
-		<h1>Braindance Nearby</h1>
-		<p>Real-time music discovery powered by Spotify</p>
-		<a href="/login">
-			<button>Login with Spotify</button>
-		</a>
-	`))
-}
-
 // HandleLogin redirects the user to Spotify's authorization page.
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	authURL := auth.BuildAuthURL()
