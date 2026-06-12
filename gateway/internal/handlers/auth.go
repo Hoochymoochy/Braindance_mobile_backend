@@ -2,26 +2,50 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 
 	"braindance-gateway/internal/auth"
 	"braindance-gateway/internal/database"
 )
 
 // HandleLogin redirects the user to Spotify's authorization page.
+// Pass ?platform=ios to receive a braindance:// redirect after authentication.
 func HandleLogin(w http.ResponseWriter, r *http.Request) {
-	authURL := auth.BuildAuthURL()
+	state := ""
+	if r.URL.Query().Get("platform") == "ios" {
+		state = "ios"
+	}
+
+	authURL := auth.BuildAuthURL(state)
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // HandleCallback processes the OAuth callback from Spotify.
 func HandleCallback(w http.ResponseWriter, r *http.Request) {
+	if oauthErr := r.URL.Query().Get("error"); oauthErr != "" {
+		state := r.URL.Query().Get("state")
+		if state == "ios" {
+			redirectURL := fmt.Sprintf(
+				"braindance://callback?error=%s",
+				url.QueryEscape(oauthErr),
+			)
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+			return
+		}
+		http.Error(w, "Spotify authorization denied", http.StatusBadRequest)
+		return
+	}
+
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		http.Error(w, "No authorization code received", http.StatusBadRequest)
 		return
 	}
+
+	state := r.URL.Query().Get("state")
 
 	// Exchange code for token
 	token, err := auth.ExchangeCodeForToken(code)
@@ -54,6 +78,16 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("User authenticated: %s (%s)", user.DisplayName, user.Email)
+
+	if state == "ios" {
+		redirectURL := fmt.Sprintf(
+			"braindance://callback?spotify_id=%s&display_name=%s",
+			url.QueryEscape(spotifyUser.ID),
+			url.QueryEscape(spotifyUser.DisplayName),
+		)
+		http.Redirect(w, r, redirectURL, http.StatusFound)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

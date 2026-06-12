@@ -13,15 +13,22 @@ import (
 )
 
 // BuildAuthURL constructs the Spotify authorization URL.
-func BuildAuthURL() string {
+// state is passed through OAuth and returned on callback (e.g. "ios" for mobile).
+func BuildAuthURL(state string) string {
 	scope := "user-read-email user-read-currently-playing user-top-read"
 
-	return fmt.Sprintf(
+	authURL := fmt.Sprintf(
 		"https://accounts.spotify.com/authorize?client_id=%s&response_type=code&redirect_uri=%s&scope=%s",
 		os.Getenv("SPOTIFY_CLIENT_ID"),
 		url.QueryEscape(os.Getenv("REDIRECT_URI")),
 		url.QueryEscape(scope),
 	)
+
+	if state != "" {
+		authURL += "&state=" + url.QueryEscape(state)
+	}
+
+	return authURL
 }
 
 // ExchangeCodeForToken swaps the authorization code for an access/refresh token pair.

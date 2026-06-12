@@ -11,11 +11,18 @@ import (
 	"github.com/joho/godotenv"
 )
 
-func main() {
-	// Load environment
-	if err := godotenv.Load("../../../.env"); err != nil {
-		log.Println("No .env file found, using system environment")
+func loadEnv() {
+	for _, path := range []string{"../.env", "../../.env", ".env"} {
+		if err := godotenv.Load(path); err == nil {
+			log.Printf("Loaded environment from %s", path)
+			return
+		}
 	}
+	log.Println("No .env file found, using system environment")
+}
+
+func main() {
+	loadEnv()
 
 	// Connect to PostgreSQL
 	if err := database.Connect(); err != nil {
