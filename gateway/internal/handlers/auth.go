@@ -47,10 +47,18 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	state := r.URL.Query().Get("state")
 
+	redirectIOS := func(query string) {
+		http.Redirect(w, r, "braindance://callback?"+query, http.StatusFound)
+	}
+
 	// Exchange code for token
 	token, err := auth.ExchangeCodeForToken(code)
 	if err != nil {
 		log.Printf("Token exchange failed: %v", err)
+		if state == "ios" {
+			redirectIOS("error=" + url.QueryEscape("token_exchange_failed"))
+			return
+		}
 		http.Error(w, "Failed to exchange authorization code", http.StatusInternalServerError)
 		return
 	}
@@ -59,6 +67,10 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	spotifyUser, err := auth.GetSpotifyUser(token.AccessToken)
 	if err != nil {
 		log.Printf("Fetching Spotify user failed: %v", err)
+		if state == "ios" {
+			redirectIOS("error=" + url.QueryEscape("profile_fetch_failed"))
+			return
+		}
 		http.Error(w, "Failed to fetch Spotify profile", http.StatusInternalServerError)
 		return
 	}
@@ -67,6 +79,10 @@ func HandleCallback(w http.ResponseWriter, r *http.Request) {
 	user, err := database.UpsertUser(spotifyUser)
 	if err != nil {
 		log.Printf("Saving user failed: %v", err)
+		if state == "ios" {
+			redirectIOS("error=" + url.QueryEscape("save_user_failed"))
+			return
+		}
 		http.Error(w, "Failed to save user", http.StatusInternalServerError)
 		return
 	}
