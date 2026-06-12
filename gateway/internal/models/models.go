@@ -88,16 +88,17 @@ type AuthResponse struct {
 
 // ── WebSocket Messages ───────────────────────────────
 
-// WsIncoming is what the phone sends: position data.
+// WsIncoming is what the phone sends over the session WebSocket.
 type WsIncoming struct {
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	Z float64 `json:"z"`
+	Type string  `json:"type,omitempty"` // "location" | "ping" | ""
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Z    float64 `json:"z"`
 }
 
-// WsOutgoing is what the server sends back: the stored location.
+// WsOutgoing is what the server sends back over the session WebSocket.
 type WsOutgoing struct {
-	Type      string  `json:"type"` // "location_update" | "error" | "connected"
+	Type      string  `json:"type"` // connected | location_update | currently_playing | pong | error
 	SpotifyID string  `json:"spotify_id,omitempty"`
 	X         float64 `json:"x,omitempty"`
 	Y         float64 `json:"y,omitempty"`

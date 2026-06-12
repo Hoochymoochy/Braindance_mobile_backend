@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
+	"time"
 
 	"braindance-gateway/internal/database"
 	"braindance-gateway/internal/models"
@@ -17,12 +20,22 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true }, // allow mobile clients
 }
 
-// HandleLocationWS is the WebSocket endpoint for real-time location tracking.
-// Clients connect with ?spotify_id=<id> and send JSON position updates:
+const (
+	wsReadTimeout  = 90 * time.Second
+	wsPingInterval = 30 * time.Second
+	wsPollInterval = 5 * time.Second
+)
+
+// HandleLocationWS is the unified WebSocket for location tracking and playback state.
+// Clients connect with ?spotify_id=<id> and can send:
 //
-//	{"x": 1.0, "y": 2.0, "z": 3.0}
+//	{"x": 1.0, "y": 2.0, "z": 3.0}           — location (lng, lat, altitude)
+//	{"type": "location", "x": ..., "y": ..., "z": ...}
+//	{"type": "ping"}                          — keepalive
 //
-// The server stores each update in Redis and echoes back the confirmed position.
+// The server pushes:
+//   - connected, location_update, pong, error
+//   - currently_playing (with track or null)
 func HandleLocationWS(w http.ResponseWriter, r *http.Request) {
 	spotifyID := r.URL.Query().Get("spotify_id")
 	if spotifyID == "" {
@@ -37,21 +50,35 @@ func HandleLocationWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	log.Printf("Location WebSocket connected: %s", spotifyID)
+	log.Printf("WebSocket connected: %s", spotifyID)
 
-	// Send handshake so the client knows it's connected
+	var writeMu sync.Mutex
+	writeJSON := func(v any) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteJSON(v)
+	}
+
+	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	})
+
 	handshake := models.WsOutgoing{
 		Type:      "connected",
 		SpotifyID: spotifyID,
-		Message:   "Location tracking active",
+		Message:   "Session active",
 	}
-	if err := conn.WriteJSON(handshake); err != nil {
+	if err := writeJSON(handshake); err != nil {
 		log.Printf("Handshake write failed for %s: %v", spotifyID, err)
 		return
 	}
 
-	// Clean up when the client disconnects
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
 	defer func() {
+		cancel()
 		if err := database.DeleteLocation(spotifyID); err != nil {
 			log.Printf("Failed to remove location for %s: %v", spotifyID, err)
 		} else {
@@ -59,28 +86,60 @@ func HandleLocationWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	go runWebSocketPingLoop(ctx, cancel, conn, &writeMu)
+	go runCurrentlyPlayingLoop(ctx, spotifyID, writeJSON)
+
 	for {
-		var msg models.WsIncoming
-		if err := conn.ReadJSON(&msg); err != nil {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
 				log.Printf("WebSocket read error for %s: %v", spotifyID, err)
 			}
 			break
 		}
 
-		// Store the position in Redis
-		loc, err := database.UpdateLocation(spotifyID, msg.X, msg.Y, msg.Z)
-		if err != nil {
-			log.Printf("Failed to update location for %s: %v", spotifyID, err)
-			conn.WriteJSON(models.WsOutgoing{
-				Type:    "error",
-				Message: "Failed to store location",
-			})
+		if err := conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); err != nil {
+			log.Printf("Failed to extend read deadline for %s: %v", spotifyID, err)
+			break
+		}
+
+		var msg models.WsIncoming
+		if err := json.Unmarshal(raw, &msg); err != nil {
 			continue
 		}
 
-		// Echo back the confirmed, timestamped location
-		if err := conn.WriteJSON(models.WsOutgoing{
+		switch msg.Type {
+		case "ping":
+			if err := writeJSON(models.WsOutgoing{Type: "pong"}); err != nil {
+				log.Printf("Pong write failed for %s: %v", spotifyID, err)
+				return
+			}
+			continue
+		case "location", "":
+			// Fall through to location handling.
+		default:
+			if err := writeJSON(models.WsOutgoing{
+				Type:    "error",
+				Message: "Unknown message type",
+			}); err != nil {
+				return
+			}
+			continue
+		}
+
+		loc, err := database.UpdateLocation(spotifyID, msg.X, msg.Y, msg.Z)
+		if err != nil {
+			log.Printf("Failed to update location for %s: %v", spotifyID, err)
+			if err := writeJSON(models.WsOutgoing{
+				Type:    "error",
+				Message: "Failed to store location",
+			}); err != nil {
+				return
+			}
+			continue
+		}
+
+		if err := writeJSON(models.WsOutgoing{
 			Type:      "location_update",
 			SpotifyID: loc.SpotifyID,
 			X:         loc.X,
@@ -88,8 +147,82 @@ func HandleLocationWS(w http.ResponseWriter, r *http.Request) {
 			Z:         loc.Z,
 			Timestamp: loc.Timestamp,
 		}); err != nil {
-			log.Printf("Write failed for %s: %v", spotifyID, err)
-			break
+			log.Printf("Location write failed for %s: %v", spotifyID, err)
+			return
+		}
+	}
+}
+
+func runWebSocketPingLoop(ctx context.Context, cancel context.CancelFunc, conn *websocket.Conn, writeMu *sync.Mutex) {
+	ticker := time.NewTicker(wsPingInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			writeMu.Lock()
+			err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+			writeMu.Unlock()
+			if err != nil {
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func runCurrentlyPlayingLoop(ctx context.Context, spotifyID string, writeJSON func(any) error) {
+	var lastTrackID string
+
+	push := func() {
+		track, err := SyncCurrentlyPlaying(spotifyID)
+		if err != nil {
+			log.Printf("Currently playing sync failed for %s: %v", spotifyID, err)
+			return
+		}
+
+		trackID := ""
+		if track != nil {
+			trackID = track.ID
+		}
+		lastTrackID = trackID
+
+		if err := writeJSON(map[string]any{
+			"type":       "currently_playing",
+			"spotify_id": spotifyID,
+			"track":      track,
+		}); err != nil {
+			log.Printf("Currently playing write failed for %s: %v", spotifyID, err)
+		}
+	}
+
+	push()
+
+	ticker := time.NewTicker(wsPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			track, err := SyncCurrentlyPlaying(spotifyID)
+			if err != nil {
+				log.Printf("Currently playing sync failed for %s: %v", spotifyID, err)
+				continue
+			}
+
+			trackID := ""
+			if track != nil {
+				trackID = track.ID
+			}
+			if trackID == lastTrackID {
+				continue
+			}
+
+			push()
 		}
 	}
 }
