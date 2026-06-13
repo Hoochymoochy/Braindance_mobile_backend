@@ -2,9 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 
+	"braindance-gateway/internal/auth"
 	"braindance-gateway/internal/database"
 )
 
@@ -32,18 +34,11 @@ func HandleCurrentlyPlaying(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := database.GetValidToken(user.ID)
-	if err != nil {
-		log.Printf("Failed to get token for user %d: %v", user.ID, err)
-		http.Error(w, "Failed to retrieve token", http.StatusInternalServerError)
-		return
-	}
-	if token == nil {
+	track, err := SyncCurrentlyPlaying(spotifyID)
+	if errors.Is(err, auth.ErrReauthRequired) {
 		http.Error(w, "No valid Spotify token — re-authenticate", http.StatusUnauthorized)
 		return
 	}
-
-	track, err := SyncCurrentlyPlaying(spotifyID)
 	if err != nil {
 		log.Printf("Spotify API error for %s: %v", spotifyID, err)
 		http.Error(w, "Failed to fetch from Spotify", http.StatusBadGateway)

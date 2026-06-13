@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"time"
 
+	"braindance-gateway/internal/auth"
 	"braindance-gateway/internal/database"
 	"braindance-gateway/internal/models"
 	"braindance-gateway/internal/spotify"
@@ -22,12 +24,12 @@ func SyncCurrentlyPlaying(spotifyID string) (*models.Track, error) {
 		return nil, nil
 	}
 
-	token, err := database.GetValidToken(user.ID)
+	token, err := auth.EnsureValidToken(user.ID)
 	if err != nil {
+		if errors.Is(err, auth.ErrReauthRequired) {
+			return nil, auth.ErrReauthRequired
+		}
 		return nil, err
-	}
-	if token == nil {
-		return nil, nil
 	}
 
 	cp, err := spotify.FetchCurrentlyPlaying(token.AccessToken)

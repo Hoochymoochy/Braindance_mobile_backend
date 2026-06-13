@@ -31,6 +31,47 @@ func BuildAuthURL(state string) string {
 	return authURL
 }
 
+// RefreshAccessToken uses a refresh token to obtain a new access token.
+func RefreshAccessToken(refreshToken string) (*models.TokenResponse, error) {
+	data := url.Values{}
+	data.Set("grant_type", "refresh_token")
+	data.Set("refresh_token", refreshToken)
+
+	req, err := http.NewRequest(
+		"POST",
+		"https://accounts.spotify.com/api/token",
+		strings.NewReader(data.Encode()),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("building refresh request: %w", err)
+	}
+
+	req.SetBasicAuth(
+		os.Getenv("SPOTIFY_CLIENT_ID"),
+		os.Getenv("SPOTIFY_CLIENT_SECRET"),
+	)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("spotify returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var token models.TokenResponse
+	if err := json.Unmarshal(body, &token); err != nil {
+		return nil, fmt.Errorf("parsing refresh response: %w", err)
+	}
+
+	return &token, nil
+}
+
 // ExchangeCodeForToken swaps the authorization code for an access/refresh token pair.
 func ExchangeCodeForToken(code string) (*models.TokenResponse, error) {
 	data := url.Values{}

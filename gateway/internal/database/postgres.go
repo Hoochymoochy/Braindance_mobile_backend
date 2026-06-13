@@ -111,6 +111,55 @@ func SaveToken(userID int, token *models.TokenResponse) error {
 	return nil
 }
 
+// GetLatestToken retrieves the most recent stored token for a user,
+// even if it has already expired.
+func GetLatestToken(userID int) (*models.Token, error) {
+	query := `
+		SELECT id, user_id, access_token, refresh_token, expires_at
+		FROM tokens
+		WHERE user_id = $1
+		ORDER BY expires_at DESC
+		LIMIT 1
+	`
+
+	var token models.Token
+	err := db.QueryRow(query, userID).
+		Scan(&token.ID, &token.UserID, &token.AccessToken, &token.RefreshToken, &token.ExpiresAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("querying latest token: %w", err)
+	}
+
+	return &token, nil
+}
+
+// SaveRefreshedToken updates a user's access token after a Spotify refresh.
+// Spotify may omit a new refresh token, so the existing one is preserved.
+func SaveRefreshedToken(userID int, existingRefreshToken string, refreshed *models.TokenResponse) error {
+	refreshToken := existingRefreshToken
+	if refreshed.RefreshToken != "" {
+		refreshToken = refreshed.RefreshToken
+	}
+
+	expiresAt := time.Now().Add(time.Duration(refreshed.ExpiresIn) * time.Second)
+
+	query := `
+		INSERT INTO tokens (user_id, access_token, refresh_token, expires_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (user_id)
+		DO UPDATE SET access_token = $2, refresh_token = $3, expires_at = $4
+	`
+
+	_, err := db.Exec(query, userID, refreshed.AccessToken, refreshToken, expiresAt)
+	if err != nil {
+		return fmt.Errorf("saving refreshed token: %w", err)
+	}
+
+	return nil
+}
+
 // GetValidToken retrieves a non-expired token for a user.
 func GetValidToken(userID int) (*models.Token, error) {
 	query := `

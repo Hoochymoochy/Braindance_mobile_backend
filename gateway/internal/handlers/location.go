@@ -3,11 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
+	"braindance-gateway/internal/auth"
 	"braindance-gateway/internal/database"
 	"braindance-gateway/internal/models"
 
@@ -175,13 +177,29 @@ func runWebSocketPingLoop(ctx context.Context, cancel context.CancelFunc, conn *
 
 func runCurrentlyPlayingLoop(ctx context.Context, spotifyID string, writeJSON func(any) error) {
 	var lastTrackID string
+	var authErrorSent bool
 
 	push := func() {
 		track, err := SyncCurrentlyPlaying(spotifyID)
+		if errors.Is(err, auth.ErrReauthRequired) {
+			if !authErrorSent {
+				log.Printf("Spotify re-auth required for %s", spotifyID)
+				if writeErr := writeJSON(models.WsOutgoing{
+					Type:    "error",
+					Message: "Spotify session expired — log in again.",
+				}); writeErr != nil {
+					log.Printf("Auth error write failed for %s: %v", spotifyID, writeErr)
+				}
+				authErrorSent = true
+			}
+			return
+		}
 		if err != nil {
 			log.Printf("Currently playing sync failed for %s: %v", spotifyID, err)
 			return
 		}
+
+		authErrorSent = false
 
 		trackID := ""
 		if track != nil {
@@ -209,6 +227,10 @@ func runCurrentlyPlayingLoop(ctx context.Context, spotifyID string, writeJSON fu
 			return
 		case <-ticker.C:
 			track, err := SyncCurrentlyPlaying(spotifyID)
+			if errors.Is(err, auth.ErrReauthRequired) {
+				push()
+				continue
+			}
 			if err != nil {
 				log.Printf("Currently playing sync failed for %s: %v", spotifyID, err)
 				continue
