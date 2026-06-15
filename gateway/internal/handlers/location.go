@@ -178,9 +178,23 @@ func runWebSocketPingLoop(ctx context.Context, cancel context.CancelFunc, conn *
 func runCurrentlyPlayingLoop(ctx context.Context, spotifyID string, writeJSON func(any) error) {
 	var lastTrackID string
 	var authErrorSent bool
+	var userErrorSent bool
 
 	push := func() {
 		track, err := SyncCurrentlyPlaying(spotifyID)
+		if errors.Is(err, ErrUserNotFound) {
+			if !userErrorSent {
+				log.Printf("User %s not in local database — re-login required", spotifyID)
+				if writeErr := writeJSON(models.WsOutgoing{
+					Type:    "error",
+					Message: "Not logged in on this server — open Settings, log out, and sign in again.",
+				}); writeErr != nil {
+					log.Printf("User error write failed for %s: %v", spotifyID, writeErr)
+				}
+				userErrorSent = true
+			}
+			return
+		}
 		if errors.Is(err, auth.ErrReauthRequired) {
 			if !authErrorSent {
 				log.Printf("Spotify re-auth required for %s", spotifyID)
@@ -200,6 +214,7 @@ func runCurrentlyPlayingLoop(ctx context.Context, spotifyID string, writeJSON fu
 		}
 
 		authErrorSent = false
+		userErrorSent = false
 
 		trackID := ""
 		if track != nil {
@@ -227,7 +242,7 @@ func runCurrentlyPlayingLoop(ctx context.Context, spotifyID string, writeJSON fu
 			return
 		case <-ticker.C:
 			track, err := SyncCurrentlyPlaying(spotifyID)
-			if errors.Is(err, auth.ErrReauthRequired) {
+			if errors.Is(err, ErrUserNotFound) || errors.Is(err, auth.ErrReauthRequired) {
 				push()
 				continue
 			}

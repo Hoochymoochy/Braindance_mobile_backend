@@ -94,7 +94,7 @@ func GetUserBySpotifyID(spotifyID string) (*models.User, error) {
 
 // SaveToken stores or updates OAuth tokens for a user.
 func SaveToken(userID int, token *models.TokenResponse) error {
-	expiresAt := time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
+	expiresAt := time.Now().UTC().Add(time.Duration(token.ExpiresIn) * time.Second)
 
 	query := `
 		INSERT INTO tokens (user_id, access_token, refresh_token, expires_at)
@@ -143,7 +143,7 @@ func SaveRefreshedToken(userID int, existingRefreshToken string, refreshed *mode
 		refreshToken = refreshed.RefreshToken
 	}
 
-	expiresAt := time.Now().Add(time.Duration(refreshed.ExpiresIn) * time.Second)
+	expiresAt := time.Now().UTC().Add(time.Duration(refreshed.ExpiresIn) * time.Second)
 
 	query := `
 		INSERT INTO tokens (user_id, access_token, refresh_token, expires_at)

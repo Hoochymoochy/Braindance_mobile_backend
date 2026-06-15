@@ -7,12 +7,13 @@ import (
 
 	"braindance-gateway/internal/database"
 	"braindance-gateway/internal/handlers"
+	"braindance-gateway/internal/musicmap"
 
 	"github.com/joho/godotenv"
 )
 
 func loadEnv() {
-	for _, path := range []string{"../.env", "../../.env", ".env"} {
+	for _, path := range []string{"../.env", "../../../.env", ".env"} {
 		if err := godotenv.Load(path); err == nil {
 			log.Printf("Loaded environment from %s", path)
 			return
@@ -43,6 +44,13 @@ func main() {
 	http.HandleFunc("/ws", handlers.HandleLocationWS)              // WebSocket: real-time location
 	http.HandleFunc("/location", handlers.HandleLocationGet)      // REST: get last-known location
 	http.HandleFunc("/currently-playing", handlers.HandleCurrentlyPlaying) // Poll Spotify → Redis
+
+	// Personal Music Map
+	http.HandleFunc("/api/v1/music/events", handlers.HandleMusicEvent)
+	http.HandleFunc("/api/v1/music/map", handlers.HandleMusicMap)
+	http.HandleFunc("/api/v1/music/insights", handlers.HandleMusicInsights)
+
+	musicmap.StartAggregationJob()
 
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {
