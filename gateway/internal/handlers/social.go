@@ -17,14 +17,15 @@ const defaultNearbyRadius = 100 // meters
 
 // Bubble represents an anonymized nearby listener for the AR view.
 type Bubble struct {
-	SessionID     string  `json:"sessionId"`
-	Distance      float64 `json:"distance"`      // meters, rounded
-	Direction     string  `json:"direction"`     // N, NE, E, SE, S, SW, W, NW
-	TrackName     string  `json:"trackName"`
-	ArtistName    string  `json:"artistName"`
-	AlbumArtURL   string  `json:"albumArtUrl,omitempty"`
-	MatchType     string  `json:"matchType,omitempty"`     // "track" | "artist" | ""
-	MatchTrackName string `json:"matchTrackName,omitempty"` // shared track/artist name
+	SessionID      string  `json:"sessionId"`
+	Distance       float64 `json:"distance"`       // meters, rounded
+	Direction      string  `json:"direction"`      // N, NE, E, SE, S, SW, W, NW
+	BearingRadians float64 `json:"bearingRadians"` // exact radians clockwise from north
+	TrackName      string  `json:"trackName"`
+	ArtistName     string  `json:"artistName"`
+	AlbumArtURL    string  `json:"albumArtUrl,omitempty"`
+	MatchType      string  `json:"matchType,omitempty"`      // "track" | "artist" | ""
+	MatchTrackName string  `json:"matchTrackName,omitempty"` // shared track/artist name
 }
 
 // nearbyResponse is the JSON body for GET /api/v1/social/nearby.
@@ -125,13 +126,16 @@ func HandleSocialNearby(w http.ResponseWriter, r *http.Request) {
 			albumArtURL = theirTrack.Album.Images[0].URL
 		}
 
+		dir, bearing := bearingToCardinal(lng, lat, n.Longitude, n.Latitude)
+
 		b := Bubble{
-			SessionID:   ephemeralID(n.SpotifyID),
-			Distance:    math.Round(n.Distance/5) * 5, // round to nearest 5m
-			Direction:   bearingToCardinal(lng, lat, n.Longitude, n.Latitude),
-			TrackName:   theirTrack.Name,
-			ArtistName:  artistName,
-			AlbumArtURL: albumArtURL,
+			SessionID:      ephemeralID(n.SpotifyID),
+			Distance:       math.Round(n.Distance/5) * 5, // round to nearest 5m
+			Direction:      dir,
+			BearingRadians: bearing,
+			TrackName:      theirTrack.Name,
+			ArtistName:     artistName,
+			AlbumArtURL:    albumArtURL,
 		}
 
 		if match != nil {
@@ -277,31 +281,47 @@ func HandleSocialReactions(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(reactionsResponse{Reactions: reactions})
 }
 
-// bearingToCardinal converts bearing to a cardinal/intercardinal direction.
-func bearingToCardinal(fromLng, fromLat, toLng, toLat float64) string {
-	dLng := toLng - fromLng
-	dLat := toLat - fromLat
-	angle := math.Atan2(dLng, dLat) * (180 / math.Pi)
-	if angle < 0 {
-		angle += 360
+// bearingToCardinal returns the cardinal/intercardinal direction AND the exact
+// bearing in radians (clockwise from north) from point A to point B.
+// Longitude difference is scaled by cos(latitude) so the bearing is accurate
+// even at higher latitudes — critical for AR bubble placement.
+func bearingToCardinal(fromLng, fromLat, toLng, toLat float64) (cardinal string, radians float64) {
+	// Convert to radians for trig
+	fromLatRad := fromLat * math.Pi / 180
+	toLatRad := toLat * math.Pi / 180
+	dLngRad := (toLng - fromLng) * math.Pi / 180
+	dLatRad := (toLat - fromLat) * math.Pi / 180
+
+	// Scale east/west difference by cosine of mean latitude so that
+	// atan2(east, north) gives a geometrically correct bearing.
+	meanLat := (fromLatRad + toLatRad) / 2
+	east := dLngRad * math.Cos(meanLat)
+	north := dLatRad
+
+	radians = math.Atan2(east, north) // 0=north, positive=clockwise
+	if radians < 0 {
+		radians += 2 * math.Pi
 	}
 
+	degrees := radians * 180 / math.Pi
+
 	switch {
-	case angle >= 337.5 || angle < 22.5:
-		return "N"
-	case angle >= 22.5 && angle < 67.5:
-		return "NE"
-	case angle >= 67.5 && angle < 112.5:
-		return "E"
-	case angle >= 112.5 && angle < 157.5:
-		return "SE"
-	case angle >= 157.5 && angle < 202.5:
-		return "S"
-	case angle >= 202.5 && angle < 247.5:
-		return "SW"
-	case angle >= 247.5 && angle < 292.5:
-		return "W"
+	case degrees >= 337.5 || degrees < 22.5:
+		cardinal = "N"
+	case degrees >= 22.5 && degrees < 67.5:
+		cardinal = "NE"
+	case degrees >= 67.5 && degrees < 112.5:
+		cardinal = "E"
+	case degrees >= 112.5 && degrees < 157.5:
+		cardinal = "SE"
+	case degrees >= 157.5 && degrees < 202.5:
+		cardinal = "S"
+	case degrees >= 202.5 && degrees < 247.5:
+		cardinal = "SW"
+	case degrees >= 247.5 && degrees < 292.5:
+		cardinal = "W"
 	default:
-		return "NW"
+		cardinal = "NW"
 	}
+	return cardinal, radians
 }
