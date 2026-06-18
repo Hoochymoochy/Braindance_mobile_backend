@@ -51,6 +51,11 @@ type ArtistCount struct {
 	Count  int    `json:"count"`
 }
 
+type TrackCount struct {
+	Track string `json:"track"`
+	Count int    `json:"count"`
+}
+
 type MusicHexProfile struct {
 	ID               int           `json:"id"`
 	UserID           int           `json:"user_id"`
@@ -59,11 +64,16 @@ type MusicHexProfile struct {
 	ListeningMinutes float64       `json:"listening_minutes"`
 	TopGenres        []GenreCount  `json:"top_genres"`
 	TopArtists       []ArtistCount `json:"top_artists"`
+	TopSongs         []TrackCount  `json:"top_songs"`
 	AvgEnergy        *float64      `json:"avg_energy,omitempty"`
 	AvgDanceability  *float64      `json:"avg_danceability,omitempty"`
 	DiscoveryScore   *float64      `json:"discovery_score,omitempty"`
 	RepeatScore      *float64      `json:"repeat_score,omitempty"`
 	TerritoryName    string        `json:"territory_name,omitempty"`
+	TopTrackID       string        `json:"top_track_id,omitempty"`
+	TopTrackName     string        `json:"top_track_name,omitempty"`
+	AlbumArtURL      string        `json:"album_art_url,omitempty"`
+	ArtistImageURL   string        `json:"artist_image_url,omitempty"`
 	LastUpdated      time.Time     `json:"last_updated"`
 }
 
@@ -74,8 +84,13 @@ type HexagonResponse struct {
 	Boundary         [][2]float64 `json:"boundary"`
 	EventCount       int          `json:"eventCount"`
 	ListeningMinutes float64      `json:"listeningMinutes"`
-	TopGenre         string       `json:"topGenre,omitempty"`
-	TopArtist        string       `json:"topArtist,omitempty"`
+	TopGenre         string        `json:"topGenre,omitempty"`
+	TopArtist        string        `json:"topArtist,omitempty"`
+	TopArtists       []ArtistCount `json:"topArtists,omitempty"`
+	TopSongs         []TrackCount  `json:"topSongs,omitempty"`
+	TopTrackName     string        `json:"topTrackName,omitempty"`
+	AlbumArtURL      string       `json:"albumArtUrl,omitempty"`
+	ArtistImageURL   string       `json:"artistImageUrl,omitempty"`
 	Energy           float64      `json:"energy,omitempty"`
 	TerritoryName    string       `json:"territoryName,omitempty"`
 	DiscoveryScore   float64      `json:"discoveryScore,omitempty"`
@@ -110,7 +125,8 @@ type AudioFeatures struct {
 }
 
 type SpotifyArtist struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Genres []string `json:"genres"`
+	ID     string       `json:"id"`
+	Name   string       `json:"name"`
+	Genres []string     `json:"genres"`
+	Images []AlbumImage `json:"images"`
 }

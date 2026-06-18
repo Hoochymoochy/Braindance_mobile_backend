@@ -11,7 +11,7 @@ import (
 	"braindance-gateway/internal/spotify"
 )
 
-const songTTL = 5 * time.Second
+const songTTL = 30 * time.Second
 
 // ErrUserNotFound means the spotify_id is not registered in this gateway's database.
 var ErrUserNotFound = errors.New("user not found")
@@ -72,4 +72,20 @@ func recordPlaybackEvent(userID int, spotifyID string, track *models.Track) {
 	if err := RecordMusicEvent(userID, track.ID, track.Name, artistName, loc.Y, loc.X, time.Now().UTC(), nil); err != nil {
 		log.Printf("Failed to record music event for %s: %v", spotifyID, err)
 	}
+}
+
+// TryRecordPlaybackForLocation saves a listening event when location arrives
+// after playback was already detected (common right after WebSocket connect).
+func TryRecordPlaybackForLocation(spotifyID string) {
+	user, err := database.GetUserBySpotifyID(spotifyID)
+	if err != nil || user == nil {
+		return
+	}
+
+	track, err := database.GetCurrentSong(spotifyID)
+	if err != nil || track == nil {
+		return
+	}
+
+	recordPlaybackEvent(user.ID, spotifyID, track)
 }

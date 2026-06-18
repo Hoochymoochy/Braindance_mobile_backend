@@ -160,6 +160,11 @@ func HandleMusicMap(w http.ResponseWriter, r *http.Request) {
 		if len(p.TopArtists) > 0 {
 			hex.TopArtist = p.TopArtists[0].Artist
 		}
+		hex.TopArtists = p.TopArtists
+		hex.TopSongs = p.TopSongs
+		hex.TopTrackName = p.TopTrackName
+		hex.AlbumArtURL = p.AlbumArtURL
+		hex.ArtistImageURL = p.ArtistImageURL
 		if p.AvgEnergy != nil {
 			hex.Energy = *p.AvgEnergy
 		}

@@ -8,6 +8,8 @@ import (
 	"braindance-gateway/internal/database"
 	"braindance-gateway/internal/handlers"
 	"braindance-gateway/internal/musicmap"
+	"braindance-gateway/internal/notifications"
+	"braindance-gateway/internal/social"
 
 	"github.com/joho/godotenv"
 )
@@ -50,7 +52,21 @@ func main() {
 	http.HandleFunc("/api/v1/music/map", handlers.HandleMusicMap)
 	http.HandleFunc("/api/v1/music/insights", handlers.HandleMusicInsights)
 
+	// Social / AR
+	http.HandleFunc("/api/v1/social/nearby", handlers.HandleSocialNearby)
+	http.HandleFunc("/api/v1/social/react", handlers.HandleSocialReact)
+	http.HandleFunc("/api/v1/social/reactions", handlers.HandleSocialReactions)
+	http.HandleFunc("/api/v1/social/visible", handlers.HandleSocialVisible)
+
+	// Notifications
+	http.HandleFunc("/api/v1/notifications/register", handlers.HandleNotificationRegister)
+	http.HandleFunc("/api/v1/notifications/unregister", handlers.HandleNotificationUnregister)
+
 	musicmap.StartAggregationJob()
+
+	// Start background match notifier for push notifications.
+	fcm := notifications.NewFCMProvider()
+	social.StartMatchNotifier(fcm)
 
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {

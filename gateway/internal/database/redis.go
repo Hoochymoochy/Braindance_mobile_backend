@@ -44,6 +44,8 @@ func CloseRedis() {
 	}
 }
 
+const geoIndexKey = "user_locations"
+
 // locationKey builds the Redis key for a user's location.
 func locationKey(spotifyID string) string {
 	return fmt.Sprintf("location:%s", spotifyID)
@@ -70,6 +72,16 @@ func UpdateLocation(spotifyID string, x, y, z float64) (*models.LocationUpdate, 
 		return nil, fmt.Errorf("storing location in Redis: %w", err)
 	}
 
+	// Also add to the GEO index for proximity queries.
+	// x = longitude, y = latitude.
+	if err := rdb.GeoAdd(ctx, geoIndexKey, &redis.GeoLocation{
+		Name:      spotifyID,
+		Longitude: x,
+		Latitude:  y,
+	}).Err(); err != nil {
+		return nil, fmt.Errorf("adding to geo index: %w", err)
+	}
+
 	return &loc, nil
 }
 
@@ -94,7 +106,47 @@ func GetLocation(spotifyID string) (*models.LocationUpdate, error) {
 
 // DeleteLocation removes a user's location from Redis (e.g. on disconnect).
 func DeleteLocation(spotifyID string) error {
-	return rdb.Del(ctx, locationKey(spotifyID)).Err()
+	if err := rdb.Del(ctx, locationKey(spotifyID)).Err(); err != nil {
+		return err
+	}
+	return rdb.ZRem(ctx, geoIndexKey, spotifyID).Err()
+}
+
+// NearbyLocation represents a user found via GEORADIUS.
+type NearbyLocation struct {
+	SpotifyID string
+	Distance  float64 // meters
+	Longitude float64
+	Latitude  float64
+}
+
+// NearbyUsers returns active users within radiusMeters of a point.
+// Sorted nearest-first. Excludes the requesting user.
+func NearbyUsers(excludeSpotifyID string, lng, lat, radiusMeters float64) ([]NearbyLocation, error) {
+	results, err := rdb.GeoRadius(ctx, geoIndexKey, lng, lat, &redis.GeoRadiusQuery{
+		Radius:    radiusMeters,
+		Unit:      "m",
+		WithDist:  true,
+		WithCoord: true,
+		Sort:      "ASC",
+	}).Result()
+	if err != nil {
+		return nil, fmt.Errorf("georadius query: %w", err)
+	}
+
+	filtered := make([]NearbyLocation, 0, len(results))
+	for _, r := range results {
+		if r.Name == excludeSpotifyID {
+			continue
+		}
+		filtered = append(filtered, NearbyLocation{
+			SpotifyID: r.Name,
+			Distance:  r.Dist,
+			Longitude: r.Longitude,
+			Latitude:  r.Latitude,
+		})
+	}
+	return filtered, nil
 }
 
 // ── Currently Playing Song ───────────────────────────
@@ -136,4 +188,70 @@ func GetCurrentSong(spotifyID string) (*models.Track, error) {
 	}
 
 	return &track, nil
+}
+
+// ── Reactions ─────────────────────────────────────────
+
+const reactionTTL = 5 * time.Minute
+
+func reactionKey(sessionID string) string {
+	return fmt.Sprintf("reactions:%s", sessionID)
+}
+
+// AddReaction stores an emoji reaction for the target ephemeral session.
+func AddReaction(sessionID, emoji string) error {
+	pipe := rdb.Pipeline()
+	pipe.RPush(ctx, reactionKey(sessionID), emoji)
+	pipe.Expire(ctx, reactionKey(sessionID), reactionTTL)
+	_, err := pipe.Exec(ctx)
+	return err
+}
+
+// ── Visibility ────────────────────────────────────────
+
+func visibilityKey(spotifyID string) string {
+	return fmt.Sprintf("visible:%s", spotifyID)
+}
+
+// SetVisibility opts a user in or out of appearing in nearby results.
+func SetVisibility(spotifyID string, visible bool) error {
+	if visible {
+		return rdb.Set(ctx, visibilityKey(spotifyID), "1", 2*time.Minute).Err()
+	}
+	return rdb.Del(ctx, visibilityKey(spotifyID)).Err()
+}
+
+// IsVisible returns whether a user has opted into nearby visibility.
+func IsVisible(spotifyID string) bool {
+	exists, _ := rdb.Exists(ctx, visibilityKey(spotifyID)).Result()
+	return exists > 0
+}
+
+// RedisExists is a generic Redis EXISTS wrapper used by rate limiters.
+func RedisExists(key string) bool {
+	exists, _ := rdb.Exists(ctx, key).Result()
+	return exists > 0
+}
+
+// RedisSetTTL sets a key with a TTL (used for rate-limit and notification markers).
+func RedisSetTTL(key, value string, ttl time.Duration) error {
+	return rdb.Set(ctx, key, value, ttl).Err()
+}
+
+// GeoIndexMembers returns all members in the geo index (active users with known location).
+func GeoIndexMembers() ([]string, error) {
+	return rdb.ZRange(ctx, geoIndexKey, 0, -1).Result()
+}
+
+// DrainReactions fetches and clears all pending reactions for a session.
+func DrainReactions(sessionID string) ([]string, error) {
+	key := reactionKey(sessionID)
+	reactions, err := rdb.LRange(ctx, key, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(reactions) > 0 {
+		rdb.Del(ctx, key)
+	}
+	return reactions, nil
 }

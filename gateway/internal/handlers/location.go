@@ -152,6 +152,8 @@ func HandleLocationWS(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Location write failed for %s: %v", spotifyID, err)
 			return
 		}
+
+		TryRecordPlaybackForLocation(spotifyID)
 	}
 }
 

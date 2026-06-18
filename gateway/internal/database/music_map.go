@@ -75,10 +75,15 @@ type hexAggregationRow struct {
 	ListeningMinutes float64
 	TopGenres        []models.GenreCount
 	TopArtists       []models.ArtistCount
+	TopSongs         []models.TrackCount
 	AvgEnergy        *float64
 	AvgDanceability  *float64
 	DiscoveryScore   float64
 	RepeatScore      float64
+	TopTrackID       string
+	TopTrackName     string
+	AlbumArtURL      string
+	ArtistImageURL   string
 }
 
 // AggregateMusicEventsForUser computes hex-level stats from raw events.
@@ -121,6 +126,10 @@ func AggregateMusicEventsForUser(userID int) ([]hexAggregationRow, error) {
 		if err != nil {
 			return nil, err
 		}
+		songs, err := topSongsForHex(userID, row.H3Index)
+		if err != nil {
+			return nil, err
+		}
 		discovery, repeat, err := discoveryRepeatScores(userID, row.H3Index)
 		if err != nil {
 			return nil, err
@@ -128,6 +137,7 @@ func AggregateMusicEventsForUser(userID int) ([]hexAggregationRow, error) {
 
 		row.TopGenres = genres
 		row.TopArtists = artists
+		row.TopSongs = songs
 		row.DiscoveryScore = discovery
 		row.RepeatScore = repeat
 		results = append(results, row)
@@ -158,6 +168,31 @@ func topArtistsForHex(userID int, h3Index string) ([]models.ArtistCount, error) 
 		artists = append(artists, a)
 	}
 	return artists, rows.Err()
+}
+
+func topSongsForHex(userID int, h3Index string) ([]models.TrackCount, error) {
+	rows, err := db.Query(`
+		SELECT track_name, COUNT(*) AS cnt
+		FROM music_events
+		WHERE user_id = $1 AND h3_index = $2
+		GROUP BY track_id, track_name
+		ORDER BY cnt DESC
+		LIMIT 5
+	`, userID, h3Index)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var songs []models.TrackCount
+	for rows.Next() {
+		var s models.TrackCount
+		if err := rows.Scan(&s.Track, &s.Count); err != nil {
+			return nil, err
+		}
+		songs = append(songs, s)
+	}
+	return songs, rows.Err()
 }
 
 func topGenresForHex(userID int, h3Index string) ([]models.GenreCount, error) {
@@ -210,23 +245,31 @@ func discoveryRepeatScores(userID int, h3Index string) (discovery float64, repea
 func UpsertMusicHexProfile(userID int, row hexAggregationRow, territoryName string) error {
 	genresJSON, _ := json.Marshal(row.TopGenres)
 	artistsJSON, _ := json.Marshal(row.TopArtists)
+	songsJSON, _ := json.Marshal(row.TopSongs)
 
 	query := `
 		INSERT INTO music_hex_profiles (
 			user_id, h3_index, event_count, listening_minutes,
-			top_genres_json, top_artists_json, avg_energy, avg_danceability,
-			discovery_score, repeat_score, territory_name, last_updated
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+			top_genres_json, top_artists_json, top_songs_json, avg_energy, avg_danceability,
+			discovery_score, repeat_score, territory_name,
+			top_track_id, top_track_name, album_art_url, artist_image_url,
+			last_updated
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, NOW())
 		ON CONFLICT (user_id, h3_index) DO UPDATE SET
 			event_count = EXCLUDED.event_count,
 			listening_minutes = EXCLUDED.listening_minutes,
 			top_genres_json = EXCLUDED.top_genres_json,
 			top_artists_json = EXCLUDED.top_artists_json,
+			top_songs_json = EXCLUDED.top_songs_json,
 			avg_energy = EXCLUDED.avg_energy,
 			avg_danceability = EXCLUDED.avg_danceability,
 			discovery_score = EXCLUDED.discovery_score,
 			repeat_score = EXCLUDED.repeat_score,
 			territory_name = EXCLUDED.territory_name,
+			top_track_id = EXCLUDED.top_track_id,
+			top_track_name = EXCLUDED.top_track_name,
+			album_art_url = EXCLUDED.album_art_url,
+			artist_image_url = EXCLUDED.artist_image_url,
 			last_updated = NOW()
 	`
 
@@ -238,11 +281,16 @@ func UpsertMusicHexProfile(userID int, row hexAggregationRow, territoryName stri
 		row.ListeningMinutes,
 		genresJSON,
 		artistsJSON,
+		songsJSON,
 		row.AvgEnergy,
 		row.AvgDanceability,
 		row.DiscoveryScore,
 		row.RepeatScore,
 		territoryName,
+		nullString(row.TopTrackID),
+		nullString(row.TopTrackName),
+		nullString(row.AlbumArtURL),
+		nullString(row.ArtistImageURL),
 	)
 	return err
 }
@@ -251,8 +299,10 @@ func UpsertMusicHexProfile(userID int, row hexAggregationRow, territoryName stri
 func GetMusicHexProfiles(userID int) ([]models.MusicHexProfile, error) {
 	rows, err := db.Query(`
 		SELECT id, user_id, h3_index, event_count, listening_minutes,
-			top_genres_json, top_artists_json, avg_energy, avg_danceability,
-			discovery_score, repeat_score, territory_name, last_updated
+			top_genres_json, top_artists_json, top_songs_json, avg_energy, avg_danceability,
+			discovery_score, repeat_score, territory_name,
+			top_track_id, top_track_name, album_art_url, artist_image_url,
+			last_updated
 		FROM music_hex_profiles
 		WHERE user_id = $1
 		ORDER BY event_count DESC
@@ -265,20 +315,23 @@ func GetMusicHexProfiles(userID int) ([]models.MusicHexProfile, error) {
 	var profiles []models.MusicHexProfile
 	for rows.Next() {
 		var p models.MusicHexProfile
-		var genresJSON, artistsJSON []byte
+		var genresJSON, artistsJSON, songsJSON []byte
 		var avgEnergy, avgDance, discovery, repeat sql.NullFloat64
-		var territory sql.NullString
+		var territory, topTrackID, topTrackName, albumArtURL, artistImageURL sql.NullString
 
 		if err := rows.Scan(
 			&p.ID, &p.UserID, &p.H3Index, &p.EventCount, &p.ListeningMinutes,
-			&genresJSON, &artistsJSON, &avgEnergy, &avgDance,
-			&discovery, &repeat, &territory, &p.LastUpdated,
+			&genresJSON, &artistsJSON, &songsJSON, &avgEnergy, &avgDance,
+			&discovery, &repeat, &territory,
+			&topTrackID, &topTrackName, &albumArtURL, &artistImageURL,
+			&p.LastUpdated,
 		); err != nil {
 			return nil, err
 		}
 
 		_ = json.Unmarshal(genresJSON, &p.TopGenres)
 		_ = json.Unmarshal(artistsJSON, &p.TopArtists)
+		_ = json.Unmarshal(songsJSON, &p.TopSongs)
 		if avgEnergy.Valid {
 			p.AvgEnergy = &avgEnergy.Float64
 		}
@@ -293,6 +346,18 @@ func GetMusicHexProfiles(userID int) ([]models.MusicHexProfile, error) {
 		}
 		if territory.Valid {
 			p.TerritoryName = territory.String
+		}
+		if topTrackID.Valid {
+			p.TopTrackID = topTrackID.String
+		}
+		if topTrackName.Valid {
+			p.TopTrackName = topTrackName.String
+		}
+		if albumArtURL.Valid {
+			p.AlbumArtURL = albumArtURL.String
+		}
+		if artistImageURL.Valid {
+			p.ArtistImageURL = artistImageURL.String
 		}
 		profiles = append(profiles, p)
 	}
@@ -441,23 +506,39 @@ func MusicMapNeedsAggregation(userID int) (bool, error) {
 		return true, nil
 	}
 
-	latestEvent, err := LatestEventTimestamp(userID)
-	if err != nil || latestEvent == nil {
+	var missingCoverArt int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM music_hex_profiles
+		WHERE user_id = $1 AND (album_art_url IS NULL OR album_art_url = '')
+	`, userID).Scan(&missingCoverArt); err != nil {
 		return false, err
 	}
-
-	var latestProfileUpdate sql.NullTime
-	err = db.QueryRow(`
-		SELECT MAX(last_updated) FROM music_hex_profiles WHERE user_id = $1
-	`, userID).Scan(&latestProfileUpdate)
-	if err != nil {
-		return false, err
-	}
-	if !latestProfileUpdate.Valid {
+	if missingCoverArt > 0 {
 		return true, nil
 	}
 
-	return latestEvent.After(latestProfileUpdate.Time), nil
+	var missingTopSongs int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM music_hex_profiles
+		WHERE user_id = $1 AND (top_songs_json IS NULL OR top_songs_json = '[]'::jsonb)
+	`, userID).Scan(&missingTopSongs); err != nil {
+		return false, err
+	}
+	if missingTopSongs > 0 {
+		return true, nil
+	}
+
+	var profileEventSum int
+	if err := db.QueryRow(`
+		SELECT COALESCE(SUM(event_count), 0) FROM music_hex_profiles WHERE user_id = $1
+	`, userID).Scan(&profileEventSum); err != nil {
+		return false, err
+	}
+	if profileEventSum != eventCount {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 // LatestEventTimestamp returns the most recent event time for a user.

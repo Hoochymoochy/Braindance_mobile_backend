@@ -56,7 +56,8 @@ func ScheduleAggregation(userID int) {
 		timer.Stop()
 	}
 
-	aggTimers[userID] = time.AfterFunc(3*time.Second, func() {
+	aggTimers[userID] = time.AfterFunc(1*time.Second, func() {
+		log.Printf("Music map aggregating user %d after new listening event", userID)
 		if err := aggregateUser(userID); err != nil {
 			log.Printf("Scheduled aggregation failed for user %d: %v", userID, err)
 		}
@@ -97,9 +98,15 @@ func aggregateUser(userID int) error {
 	var profiles []models.MusicHexProfile
 
 	for _, row := range rows {
-		genres, err := enrichGenresForHex(userID, row.H3Index, token)
-		if err == nil && len(genres) > 0 {
-			row.TopGenres = genres
+		enrichment, err := enrichHexFromSpotify(userID, row.H3Index, token)
+		if err == nil {
+			if len(enrichment.TopGenres) > 0 {
+				row.TopGenres = enrichment.TopGenres
+			}
+			row.TopTrackID = enrichment.TopTrackID
+			row.TopTrackName = enrichment.TopTrackName
+			row.AlbumArtURL = enrichment.AlbumArtURL
+			row.ArtistImageURL = enrichment.ArtistImageURL
 		}
 
 		nightCount, err := database.CountNightEvents(userID, row.H3Index)
@@ -123,6 +130,10 @@ func aggregateUser(userID int) error {
 			AvgDanceability:  row.AvgDanceability,
 			DiscoveryScore:   &row.DiscoveryScore,
 			RepeatScore:      &row.RepeatScore,
+			TopTrackID:       row.TopTrackID,
+			TopTrackName:     row.TopTrackName,
+			AlbumArtURL:      row.AlbumArtURL,
+			ArtistImageURL:   row.ArtistImageURL,
 		}
 		profile.TerritoryName = TerritoryName(profile, nightRatio)
 
@@ -136,34 +147,57 @@ func aggregateUser(userID int) error {
 	return database.ReplaceMusicInsights(userID, insights)
 }
 
-func enrichGenresForHex(userID int, h3Index string, token *models.Token) ([]models.GenreCount, error) {
+type hexSpotifyEnrichment struct {
+	TopGenres      []models.GenreCount
+	TopTrackID     string
+	TopTrackName   string
+	AlbumArtURL    string
+	ArtistImageURL string
+}
+
+func enrichHexFromSpotify(userID int, h3Index string, token *models.Token) (hexSpotifyEnrichment, error) {
 	if token == nil {
-		return nil, nil
+		return hexSpotifyEnrichment{}, nil
 	}
 
 	trackID, err := database.GetTopTrackIDForHex(userID, h3Index)
 	if err != nil || trackID == "" {
-		return nil, err
+		return hexSpotifyEnrichment{}, err
 	}
 
 	track, err := spotify.FetchTrack(token.AccessToken, trackID)
-	if err != nil || len(track.Artists) == 0 {
-		return nil, err
+	if err != nil {
+		return hexSpotifyEnrichment{}, err
+	}
+
+	enrichment := hexSpotifyEnrichment{
+		TopTrackID:   track.ID,
+		TopTrackName: track.Name,
+		AlbumArtURL:  spotify.BestImageURL(track.Album.Images),
+	}
+
+	if len(track.Artists) == 0 {
+		return enrichment, nil
 	}
 
 	artist, err := spotify.FetchArtist(token.AccessToken, track.Artists[0].ID)
-	if err != nil || len(artist.Genres) == 0 {
-		return nil, err
+	if err != nil {
+		return enrichment, err
 	}
 
-	genres := make([]models.GenreCount, 0, len(artist.Genres))
-	for i, g := range artist.Genres {
-		if i >= 3 {
-			break
+	enrichment.ArtistImageURL = spotify.BestImageURL(artist.Images)
+	if len(artist.Genres) > 0 {
+		genres := make([]models.GenreCount, 0, len(artist.Genres))
+		for i, g := range artist.Genres {
+			if i >= 3 {
+				break
+			}
+			genres = append(genres, models.GenreCount{Genre: g, Count: 1})
 		}
-		genres = append(genres, models.GenreCount{Genre: g, Count: 1})
+		enrichment.TopGenres = genres
 	}
-	return genres, nil
+
+	return enrichment, nil
 }
 
 func enrichAudioFeatures(userID int) {
