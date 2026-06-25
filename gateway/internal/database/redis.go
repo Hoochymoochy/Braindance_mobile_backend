@@ -209,22 +209,26 @@ func AddReaction(sessionID, emoji string) error {
 
 // ── Visibility ────────────────────────────────────────
 
-func visibilityKey(spotifyID string) string {
-	return fmt.Sprintf("visible:%s", spotifyID)
+func hiddenKey(spotifyID string) string {
+	return fmt.Sprintf("hidden:%s", spotifyID)
 }
 
 // SetVisibility opts a user in or out of appearing in nearby results.
+// Uses opt-out semantics: users are visible by default; calling with visible=false
+// makes them hidden. The hidden key persists for 24 hours.
 func SetVisibility(spotifyID string, visible bool) error {
 	if visible {
-		return rdb.Set(ctx, visibilityKey(spotifyID), "1", 2*time.Minute).Err()
+		// Remove the hidden marker — user is visible again.
+		return rdb.Del(ctx, hiddenKey(spotifyID)).Err()
 	}
-	return rdb.Del(ctx, visibilityKey(spotifyID)).Err()
+	return rdb.Set(ctx, hiddenKey(spotifyID), "1", 24*time.Hour).Err()
 }
 
 // IsVisible returns whether a user has opted into nearby visibility.
+// Defaults to visible (true) unless the user has explicitly opted out.
 func IsVisible(spotifyID string) bool {
-	exists, _ := rdb.Exists(ctx, visibilityKey(spotifyID)).Result()
-	return exists > 0
+	exists, _ := rdb.Exists(ctx, hiddenKey(spotifyID)).Result()
+	return exists == 0 // visible unless explicitly hidden
 }
 
 // RedisExists is a generic Redis EXISTS wrapper used by rate limiters.
