@@ -76,18 +76,9 @@ func HandleSocialNearby(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	user, err := database.GetUserBySpotifyID(spotifyID)
-	if err != nil {
-		log.Printf("Social nearby: user lookup failed: %v", err)
-		http.Error(w, "Failed to find user", http.StatusInternalServerError)
-		return
-	}
-	if user == nil {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
 	// Get my currently-playing track for match detection.
+	// User lookup is best-effort — still return nearby results even if the
+	// requesting user isn't registered in PostgreSQL (e.g., mock/test users).
 	myTrack, _ := database.GetCurrentSong(spotifyID)
 
 	// Find nearby active users via Redis GEO index.
